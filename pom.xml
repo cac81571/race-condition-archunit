@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <!--
+    まとめてビルドするためだけの集約 POM（親 POM ではありません）。
+    各サブプロジェクトは単独でもビルドできるので、必要なフォルダだけコピーして使えます。
+      mvn install   → 3 つの jar をローカルリポジトリ（~/.m2）にインストール
+  -->
+  <groupId>com.example.archrules</groupId>
+  <artifactId>race-condition-archunit-aggregator</artifactId>
+  <version>1.0.0</version>
+  <packaging>pom</packaging>
+  <name>レースコンディション対策 ArchUnit ルール（集約）</name>
+
+  <modules>
+    <module>annotations</module>
+    <module>jakartaee</module>
+    <module>spring</module>
+  </modules>
+
+  <properties>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+  </properties>
+</project>

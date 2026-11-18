@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>com.example.archrules</groupId>
+  <artifactId>race-condition-rules-jakartaee</artifactId>
+  <version>1.0.0</version>
+  <packaging>jar</packaging>
+  <name>レースコンディション対策 ArchUnit ルール（Jakarta EE）</name>
+
+  <properties>
+    <maven.compiler.release>17</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <archunit.version>1.5.1</archunit.version>
+    <junit.version>5.14.4</junit.version>
+  </properties>
+
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>org.junit</groupId>
+        <artifactId>junit-bom</artifactId>
+        <version>${junit.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
+  <dependencies>
+    <!-- ===== ルール本体が使うもの（compile）: ArchUnit だけ。Jakarta EE / Spring には依存しない ===== -->
+    <dependency>
+      <groupId>com.tngtech.archunit</groupId>
+      <artifactId>archunit</artifactId>
+      <version>${archunit.version}</version>
+    </dependency>
+    <!-- @ArchTest を付けておくと、利用側で ArchTests.in(ルールクラス) の 1 行で全ルールを実行できる -->
+    <dependency>
+      <groupId>com.tngtech.archunit</groupId>
+      <artifactId>archunit-junit5-api</artifactId>
+      <version>${archunit.version}</version>
+    </dependency>
+
+    <!-- ===== このライブラリ自身のテスト用（利用側には伝わらない） ===== -->
+    <dependency>
+      <groupId>jakarta.platform</groupId>
+      <artifactId>jakarta.jakartaee-api</artifactId>
+      <version>10.0.0</version>
+      <scope>test</scope>
+    </dependency>
+    <!-- javax.* （Java EE 8 以前）でも検出できることの確認用 -->
+    <dependency>
+      <groupId>javax.ejb</groupId>
+      <artifactId>javax.ejb-api</artifactId>
+      <version>3.2.2</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.13.0</version>
+        <configuration>
+          <showWarnings>true</showWarnings>
+        </configuration>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <version>3.5.4</version>
+      </plugin>
+    </plugins>
+  </build>
+</project>
