@@ -24,7 +24,7 @@ import com.tngtech.archunit.lang.EvaluationResult;
  * ルール自体のテスト。fixtures/bad（わざと危ない書き方）で違反が出ること、
  * fixtures/good（正しい書き方・対象外の Bean）で違反が出ないことを確認する。
  */
-class JakartaEeRaceConditionRulesTest {
+class JakartaEeStateLeakRulesTest {
 
     static final String BAD = "com.example.archrules.jakartaee.fixtures.bad";
     static final String GOOD = "com.example.archrules.jakartaee.fixtures.good";
@@ -46,17 +46,21 @@ class JakartaEeRaceConditionRulesTest {
     static Stream<Arguments> expectedViolationCounts() {
         return Stream.of(
                 // @Stateless: StatefulOrderSearchService(4/3/1) + LegacyJavax(1/1/0) + LambdaWriting(1/1/0)
-                Arguments.of("STATELESS_ONLY_SAFE_FIELDS", JakartaEeRaceConditionRules.STATELESS_ONLY_SAFE_FIELDS, 6),
-                Arguments.of("STATELESS_NO_FIELD_WRITES", JakartaEeRaceConditionRules.STATELESS_NO_FIELD_WRITES, 5),
-                Arguments.of("STATELESS_NO_COLLECTION_MUTATION", JakartaEeRaceConditionRules.STATELESS_NO_COLLECTION_MUTATION, 1),
+                Arguments.of("STATELESS_ONLY_SAFE_FIELDS", JakartaEeStateLeakRules.STATELESS_ONLY_SAFE_FIELDS, 6),
+                Arguments.of("STATELESS_NO_FIELD_WRITES", JakartaEeStateLeakRules.STATELESS_NO_FIELD_WRITES, 5),
+                Arguments.of("STATELESS_NO_COLLECTION_MUTATION", JakartaEeStateLeakRules.STATELESS_NO_COLLECTION_MUTATION, 1),
                 // @Singleton EJB: CodeMasterCache(2/1/1)
-                Arguments.of("SINGLETON_ONLY_SAFE_FIELDS", JakartaEeRaceConditionRules.SINGLETON_ONLY_SAFE_FIELDS, 2),
-                Arguments.of("SINGLETON_NO_FIELD_WRITES", JakartaEeRaceConditionRules.SINGLETON_NO_FIELD_WRITES, 1),
-                Arguments.of("SINGLETON_NO_COLLECTION_MUTATION", JakartaEeRaceConditionRules.SINGLETON_NO_COLLECTION_MUTATION, 1),
+                Arguments.of("SINGLETON_ONLY_SAFE_FIELDS", JakartaEeStateLeakRules.SINGLETON_ONLY_SAFE_FIELDS, 2),
+                Arguments.of("SINGLETON_NO_FIELD_WRITES", JakartaEeStateLeakRules.SINGLETON_NO_FIELD_WRITES, 1),
+                Arguments.of("SINGLETON_NO_COLLECTION_MUTATION", JakartaEeStateLeakRules.SINGLETON_NO_COLLECTION_MUTATION, 1),
                 // @ApplicationScoped: CurrentUserHolder(2/1/1)
-                Arguments.of("APPLICATION_SCOPED_ONLY_SAFE_FIELDS", JakartaEeRaceConditionRules.APPLICATION_SCOPED_ONLY_SAFE_FIELDS, 2),
-                Arguments.of("APPLICATION_SCOPED_NO_FIELD_WRITES", JakartaEeRaceConditionRules.APPLICATION_SCOPED_NO_FIELD_WRITES, 1),
-                Arguments.of("APPLICATION_SCOPED_NO_COLLECTION_MUTATION", JakartaEeRaceConditionRules.APPLICATION_SCOPED_NO_COLLECTION_MUTATION, 1));
+                Arguments.of("APPLICATION_SCOPED_ONLY_SAFE_FIELDS", JakartaEeStateLeakRules.APPLICATION_SCOPED_ONLY_SAFE_FIELDS, 2),
+                Arguments.of("APPLICATION_SCOPED_NO_FIELD_WRITES", JakartaEeStateLeakRules.APPLICATION_SCOPED_NO_FIELD_WRITES, 1),
+                Arguments.of("APPLICATION_SCOPED_NO_COLLECTION_MUTATION", JakartaEeStateLeakRules.APPLICATION_SCOPED_NO_COLLECTION_MUTATION, 1),
+                // Servlet リスナー: Request(2/1/1) + Session(1/1/0) + Startup(2/1/1) + Attribute(1/1/0) + LegacyJavax(1/1/0)
+                Arguments.of("SERVLET_LISTENER_ONLY_SAFE_FIELDS", JakartaEeStateLeakRules.SERVLET_LISTENER_ONLY_SAFE_FIELDS, 7),
+                Arguments.of("SERVLET_LISTENER_NO_FIELD_WRITES", JakartaEeStateLeakRules.SERVLET_LISTENER_NO_FIELD_WRITES, 5),
+                Arguments.of("SERVLET_LISTENER_NO_COLLECTION_MUTATION", JakartaEeStateLeakRules.SERVLET_LISTENER_NO_COLLECTION_MUTATION, 2));
     }
 
     @ParameterizedTest(name = "{0}: 危ない書き方で {2} 件検出する")
@@ -76,20 +80,20 @@ class JakartaEeRaceConditionRulesTest {
     @Test
     @DisplayName("違反メッセージに種類・クラス・フィールド・行番号が日本語で出る")
     void 違反メッセージ() {
-        List<String> writes = violations(JakartaEeRaceConditionRules.STATELESS_NO_FIELD_WRITES, bad);
+        List<String> writes = violations(JakartaEeStateLeakRules.STATELESS_NO_FIELD_WRITES, bad);
         assertTrue(writes.stream().anyMatch(m -> m.startsWith(
-                "[フィールド代入] StatefulOrderSearchService.setCondition() が フィールド StatefulOrderSearchService.condition に代入しています (StatefulOrderSearchService.java:")),
+                "【ステートリーク】[フィールド代入] StatefulOrderSearchService.setCondition() が フィールド StatefulOrderSearchService.condition に代入しています (StatefulOrderSearchService.java:")),
                 () -> String.join("\n", writes));
         assertTrue(writes.stream().anyMatch(m -> m.contains("static フィールド StatefulOrderSearchService.searchCount")));
         assertTrue(writes.stream().anyMatch(m -> m.contains("LambdaWritingService.last")));
         assertTrue(writes.stream().anyMatch(m -> m.contains("LegacyJavaxStatelessService.lastKeyword")), "javax.ejb.Stateless も対象");
 
-        List<String> mutations = violations(JakartaEeRaceConditionRules.STATELESS_NO_COLLECTION_MUTATION, bad);
+        List<String> mutations = violations(JakartaEeStateLeakRules.STATELESS_NO_COLLECTION_MUTATION, bad);
         assertTrue(mutations.get(0).startsWith(
-                "[コレクション変更] StatefulOrderSearchService.search() がフィールド StatefulOrderSearchService.searchHistory（型: List）の中身を add() で変更しています"),
+                "【ステートリーク】[コレクション変更] StatefulOrderSearchService.search() がフィールド StatefulOrderSearchService.searchHistory（型: List）の中身を add() で変更しています"),
                 mutations::toString);
 
-        List<String> fields = violations(JakartaEeRaceConditionRules.STATELESS_ONLY_SAFE_FIELDS, bad);
+        List<String> fields = violations(JakartaEeStateLeakRules.STATELESS_ONLY_SAFE_FIELDS, bad);
         assertTrue(fields.stream().anyMatch(m -> m.contains("フィールド searchCount（型: int）: static だが final ではない")), fields::toString);
         assertFalse(fields.stream().anyMatch(m -> m.contains("orderMapper")), "@Inject フィールドは対象外");
     }
@@ -98,9 +102,9 @@ class JakartaEeRaceConditionRulesTest {
     @DisplayName("@AllowStatefulField（任意パッケージの同名アノテーション）で除外できる")
     void 除外アノテーション() {
         List<String> all = Stream.of(
-                        JakartaEeRaceConditionRules.SINGLETON_ONLY_SAFE_FIELDS,
-                        JakartaEeRaceConditionRules.SINGLETON_NO_FIELD_WRITES,
-                        JakartaEeRaceConditionRules.SINGLETON_NO_COLLECTION_MUTATION)
+                        JakartaEeStateLeakRules.SINGLETON_ONLY_SAFE_FIELDS,
+                        JakartaEeStateLeakRules.SINGLETON_NO_FIELD_WRITES,
+                        JakartaEeStateLeakRules.SINGLETON_NO_COLLECTION_MUTATION)
                 .flatMap(r -> violations(r, bad).stream()).toList();
         assertFalse(all.stream().anyMatch(m -> m.contains("departmentNames")), all::toString);
     }
@@ -108,20 +112,41 @@ class JakartaEeRaceConditionRulesTest {
     @Test
     @DisplayName("独自アノテーションにも同じルールをかけられる（ファクトリメソッド）")
     void ファクトリメソッド() {
-        ArchRule rule = JakartaEeRaceConditionRules.noFieldWrites(
+        ArchRule rule = JakartaEeStateLeakRules.noFieldWrites(
                 "@RequestScoped（テスト用にあえて対象化）", "テスト", "jakarta.enterprise.context.RequestScoped");
         assertEquals(1, violations(rule, good).size());
     }
 
     @Test
-    @DisplayName("ArchTests.in(JakartaEeRaceConditionRules.class) で 9 ルールが取れる")
+    @DisplayName("Servlet リスナーはインターフェースと @WebListener を検出し、contextInitialized は免除する")
+    void サーブレットリスナー() {
+        List<String> writes = violations(JakartaEeStateLeakRules.SERVLET_LISTENER_NO_FIELD_WRITES, bad);
+        assertTrue(writes.stream().anyMatch(m -> m.contains("RequestTrackingListener.requestInitialized()")));
+        assertTrue(writes.stream().anyMatch(m -> m.contains("SessionTrackingListener.sessionCreated()")),
+                "アノテーションが無くても HttpSessionListener を検出する");
+        assertTrue(writes.stream().anyMatch(m -> m.contains("LegacyJavaxRequestListener.requestInitialized()")),
+                "javax.servlet.ServletRequestListener も対象");
+        assertTrue(writes.stream().anyMatch(m -> m.contains("AttributeTrackingListener.attributeAdded()")),
+                "@WebListener だけでも対象");
+        assertTrue(writes.stream().anyMatch(m -> m.contains("StartupConfigListener.record()")));
+        assertFalse(writes.stream().anyMatch(m -> m.contains("contextInitialized")),
+                () -> String.join("\n", writes));
+
+        List<String> mutations = violations(JakartaEeStateLeakRules.SERVLET_LISTENER_NO_COLLECTION_MUTATION, bad);
+        assertFalse(mutations.stream().anyMatch(m -> m.contains("contextInitialized")),
+                () -> String.join("\n", mutations));
+        assertTrue(mutations.stream().anyMatch(m -> m.contains("StartupConfigListener.record()")));
+    }
+
+    @Test
+    @DisplayName("ArchTests.in(JakartaEeStateLeakRules.class) で 12 ルールが取れる")
     void ArchTestsで全ルール() {
-        ArchTests tests = ArchTests.in(JakartaEeRaceConditionRules.class);
-        assertEquals(JakartaEeRaceConditionRules.class, tests.getDefinitionLocation());
-        long count = Stream.of(JakartaEeRaceConditionRules.class.getFields())
+        ArchTests tests = ArchTests.in(JakartaEeStateLeakRules.class);
+        assertEquals(JakartaEeStateLeakRules.class, tests.getDefinitionLocation());
+        long count = Stream.of(JakartaEeStateLeakRules.class.getFields())
                 .filter(f -> ArchRule.class.isAssignableFrom(f.getType()))
                 .filter(f -> f.isAnnotationPresent(com.tngtech.archunit.junit.ArchTest.class))
                 .count();
-        assertEquals(9, count);
+        assertEquals(12, count);
     }
 }

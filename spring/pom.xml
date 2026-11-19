@@ -8,7 +8,7 @@
   <artifactId>race-condition-rules-spring</artifactId>
   <version>1.0.0</version>
   <packaging>jar</packaging>
-  <name>レースコンディション対策 ArchUnit ルール（Spring MVC / Spring Boot）</name>
+  <name>ステートリーク対策 ArchUnit ルール（Spring MVC / Spring Boot）</name>
 
   <properties>
     <maven.compiler.release>17</maven.compiler.release>

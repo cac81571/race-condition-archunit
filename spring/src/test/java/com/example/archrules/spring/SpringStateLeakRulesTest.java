@@ -22,7 +22,7 @@ import com.tngtech.archunit.lang.ArchRule;
  * ルール自体のテスト。fixtures/bad（わざと危ない書き方）で違反が出ること、
  * fixtures/good（正しい書き方・対象外の Bean）で違反が出ないことを確認する。
  */
-class SpringRaceConditionRulesTest {
+class SpringStateLeakRulesTest {
 
     static JavaClasses bad;
     static JavaClasses good;
@@ -40,13 +40,13 @@ class SpringRaceConditionRulesTest {
     static Stream<Arguments> expectedViolationCounts() {
         return Stream.of(
                 // A: AccessCounter 1, BadReportService 1, SearchHistoryService 1, SharedCart 1, StatefulOrderController 2
-                Arguments.of("SINGLETON_ONLY_SAFE_FIELDS", SpringRaceConditionRules.SINGLETON_ONLY_SAFE_FIELDS, 6),
+                Arguments.of("SINGLETON_ONLY_SAFE_FIELDS", SpringStateLeakRules.SINGLETON_ONLY_SAFE_FIELDS, 6),
                 // B: AccessCounter 1, SharedCart 1, StatefulOrderController 2
-                Arguments.of("SINGLETON_NO_FIELD_WRITES", SpringRaceConditionRules.SINGLETON_NO_FIELD_WRITES, 4),
+                Arguments.of("SINGLETON_NO_FIELD_WRITES", SpringStateLeakRules.SINGLETON_NO_FIELD_WRITES, 4),
                 // C: SearchHistoryService 1, SharedCart 1
-                Arguments.of("SINGLETON_NO_COLLECTION_MUTATION", SpringRaceConditionRules.SINGLETON_NO_COLLECTION_MUTATION, 2),
+                Arguments.of("SINGLETON_NO_COLLECTION_MUTATION", SpringStateLeakRules.SINGLETON_NO_COLLECTION_MUTATION, 2),
                 // D: BadReportService 1
-                Arguments.of("NO_DIRECT_PROTOTYPE_INJECTION", SpringRaceConditionRules.NO_DIRECT_PROTOTYPE_INJECTION, 1));
+                Arguments.of("NO_DIRECT_PROTOTYPE_INJECTION", SpringStateLeakRules.NO_DIRECT_PROTOTYPE_INJECTION, 1));
     }
 
     @ParameterizedTest(name = "{0}: 危ない書き方で {2} 件検出する")
@@ -66,29 +66,29 @@ class SpringRaceConditionRulesTest {
     @Test
     @DisplayName("違反メッセージに種類・クラス・フィールド・行番号が日本語で出る")
     void 違反メッセージ() {
-        List<String> writes = violations(SpringRaceConditionRules.SINGLETON_NO_FIELD_WRITES, bad);
+        List<String> writes = violations(SpringStateLeakRules.SINGLETON_NO_FIELD_WRITES, bad);
         assertTrue(writes.stream().anyMatch(m -> m.startsWith(
-                "[フィールド代入] StatefulOrderController.search() が フィールド StatefulOrderController.keyword に代入しています (StatefulOrderController.java:")),
+                "【ステートリーク】[フィールド代入] StatefulOrderController.search() が フィールド StatefulOrderController.keyword に代入しています (StatefulOrderController.java:")),
                 () -> String.join("\n", writes));
 
-        List<String> fields = violations(SpringRaceConditionRules.SINGLETON_ONLY_SAFE_FIELDS, bad);
+        List<String> fields = violations(SpringStateLeakRules.SINGLETON_ONLY_SAFE_FIELDS, bad);
         assertTrue(fields.stream().anyMatch(m -> m.contains("SearchHistoryService のフィールド history（型: List）: final だがコンストラクタ注入ではない")), fields::toString);
         assertTrue(fields.stream().anyMatch(m -> m.contains("orderService") && m.contains("@Qualifier / @Named だけでは注入されない")), fields::toString);
         assertFalse(fields.stream().anyMatch(m -> m.contains("StatefulOrderController のフィールド orderService")), "コンストラクタ注入の final は対象外");
 
-        List<String> proto = violations(SpringRaceConditionRules.NO_DIRECT_PROTOTYPE_INJECTION, bad);
+        List<String> proto = violations(SpringStateLeakRules.NO_DIRECT_PROTOTYPE_INJECTION, bad);
         assertTrue(proto.get(0).contains("[prototype 直接注入]") && proto.get(0).contains("コンストラクタ引数に prototype の ReportBuilder"), proto::toString);
     }
 
     @Test
     @DisplayName("@ApplicationScope は対象、@RequestScope / @SessionScope / prototype / @ConfigurationProperties は対象外")
     void スコープ判定() {
-        assertTrue(violations(SpringRaceConditionRules.SINGLETON_NO_FIELD_WRITES, bad).stream().anyMatch(m -> m.contains("SharedCart")));
-        assertTrue(SpringRaceConditionRules.areSharedSpringBeans().test(good.get(
+        assertTrue(violations(SpringStateLeakRules.SINGLETON_NO_FIELD_WRITES, bad).stream().anyMatch(m -> m.contains("SharedCart")));
+        assertTrue(SpringStateLeakRules.areSharedSpringBeans().test(good.get(
                 com.example.archrules.spring.fixtures.good.GoodOrderController.class)));
         for (String nested : List.of("PrototypeCsvWriter", "RequestScopedCondition", "RequestScopeAnnotated",
                 "SessionCart", "AppProperties", "WholeClassAllowed")) {
-            assertFalse(SpringRaceConditionRules.areSharedSpringBeans().test(
+            assertFalse(SpringStateLeakRules.areSharedSpringBeans().test(
                     good.get("com.example.archrules.spring.fixtures.good.ScopedBeans$" + nested)), nested);
         }
     }
@@ -96,7 +96,7 @@ class SpringRaceConditionRulesTest {
     @Test
     @DisplayName("ルールクラスに @ArchTest 付きの ArchRule が 4 つある（ArchTests.in で全部実行できる）")
     void ArchTestsで全ルール() {
-        long count = Stream.of(SpringRaceConditionRules.class.getFields())
+        long count = Stream.of(SpringStateLeakRules.class.getFields())
                 .filter(f -> ArchRule.class.isAssignableFrom(f.getType()))
                 .filter(f -> f.isAnnotationPresent(com.tngtech.archunit.junit.ArchTest.class))
                 .count();

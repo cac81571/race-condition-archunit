@@ -8,7 +8,7 @@
   <artifactId>race-condition-rules-jakartaee</artifactId>
   <version>1.0.0</version>
   <packaging>jar</packaging>
-  <name>レースコンディション対策 ArchUnit ルール（Jakarta EE）</name>
+  <name>ステートリーク対策 ArchUnit ルール（Jakarta EE）</name>
 
   <properties>
     <maven.compiler.release>17</maven.compiler.release>
@@ -55,6 +55,12 @@
       <groupId>javax.ejb</groupId>
       <artifactId>javax.ejb-api</artifactId>
       <version>3.2.2</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>javax.servlet</groupId>
+      <artifactId>javax.servlet-api</artifactId>
+      <version>4.0.1</version>
       <scope>test</scope>
     </dependency>
     <dependency>

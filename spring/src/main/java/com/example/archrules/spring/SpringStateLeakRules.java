@@ -36,7 +36,7 @@ import com.tngtech.archunit.lang.SimpleConditionEvent;
 import com.tngtech.archunit.library.freeze.FreezingArchRule;
 
 /**
- * Spring MVC / Spring Boot 向けレースコンディション対策ルール集:
+ * Spring MVC / Spring Boot 向けステートリーク対策ルール集:
  * 「シングルトン Bean がフィールドにリクエスト固有の状態を持つ」ことを禁止する ArchUnit ルール。
  *
  * <p>対象: {@code @Component} が（メタアノテーションとして）付いたクラス。
@@ -63,18 +63,18 @@ import com.tngtech.archunit.library.freeze.FreezingArchRule;
  * <p>使い方（利用側のテスト）:
  * <pre>{@code
  * @AnalyzeClasses(packages = "com.mycompany.myapp", importOptions = ImportOption.DoNotIncludeTests.class)
- * class RaceConditionTest {
+ * class StateLeakTest {
  *     @ArchTest
- *     static final ArchTests 全ルール = ArchTests.in(SpringRaceConditionRules.class);
+ *     static final ArchTests 全ルール = ArchTests.in(SpringStateLeakRules.class);
  * }
  * }</pre>
  *
  * <p>除外: {@code @AllowStatefulField("理由")} をフィールド・メソッド・クラスに付ける（単純名で判定）。
  * 既存違反を一括で凍結するには {@code -Darchunit.freeze=true}（FreezingArchRule）。
  */
-public final class SpringRaceConditionRules {
+public final class SpringStateLeakRules {
 
-    private SpringRaceConditionRules() {
+    private SpringStateLeakRules() {
     }
 
     // ------------------------------------------------------------------
@@ -83,6 +83,9 @@ public final class SpringRaceConditionRules {
 
     /** 除外用アノテーションの単純名（パッケージは問わない） */
     public static final String ALLOW_ANNOTATION_SIMPLE_NAME = "AllowStatefulField";
+
+    /** 違反メッセージの先頭。ログや CI でこの不具合だけを拾えるようにする */
+    public static final String VIOLATION_PREFIX = "【ステートリーク】";
 
     static final String COMPONENT = "org.springframework.stereotype.Component";
     static final String SCOPE = "org.springframework.context.annotation.Scope";
@@ -162,7 +165,7 @@ public final class SpringRaceConditionRules {
             + "（@Scope(proxyMode = ScopedProxyMode.TARGET_CLASS) を付ける方法もあります）";
 
     // ------------------------------------------------------------------
-    // ルール本体（ArchTests.in(SpringRaceConditionRules.class) で 4 ルールすべてを実行できる）
+    // ルール本体（ArchTests.in(SpringStateLeakRules.class) で 4 ルールすべてを実行できる）
     // ------------------------------------------------------------------
 
     /** ルール A: フィールドは注入・コンストラクタ注入の final・static final・ロガーのみ */
@@ -214,7 +217,7 @@ public final class SpringRaceConditionRules {
         return DescribedPredicate.describe(
                 "共有される Spring Bean（@Component 系。request / session / prototype スコープ、"
                         + "@ConfigurationProperties、@" + ALLOW_ANNOTATION_SIMPLE_NAME + " 付きクラスを除く）",
-                SpringRaceConditionRules::isSharedSpringBean);
+                SpringStateLeakRules::isSharedSpringBean);
     }
 
     static boolean isSharedSpringBean(JavaClass c) {
@@ -224,7 +227,7 @@ public final class SpringRaceConditionRules {
         if (EXCLUDED_CLASS_ANNOTATIONS.stream().anyMatch(a -> c.isAnnotatedWith(a) || c.isMetaAnnotatedWith(a))) {
             return false;
         }
-        return !NON_SHARED_SCOPES.contains(scopeAnnotation(c).map(SpringRaceConditionRules::scopeName).orElse(""));
+        return !NON_SHARED_SCOPES.contains(scopeAnnotation(c).map(SpringStateLeakRules::scopeName).orElse(""));
     }
 
     /** @Scope を直接、またはメタアノテーション（@RequestScope 等）経由で探す */
@@ -353,7 +356,7 @@ public final class SpringRaceConditionRules {
                         reason = "注入でも static final でもないインスタンスフィールド（リクエストの値を保持できてしまう）";
                     }
                     events.add(SimpleConditionEvent.violated(f, String.format(
-                            "[フィールド宣言] %s のフィールド %s（型: %s）: %s (%s.java)",
+                            VIOLATION_PREFIX + "[フィールド宣言] %s のフィールド %s（型: %s）: %s (%s.java)",
                             javaClass.getName(), f.getName(), f.getRawType().getSimpleName(), reason,
                             javaClass.getSimpleName())));
                 }
@@ -394,7 +397,7 @@ public final class SpringRaceConditionRules {
                     String kind = field.getModifiers().contains(JavaModifier.STATIC) ? "static フィールド" : "フィールド";
                     String from = fromSelf ? "" : "（内部クラス・他クラスからの書き込み）";
                     events.add(SimpleConditionEvent.violated(access, String.format(
-                            "[フィールド代入] %s が %s %s.%s に代入しています%s %s",
+                            VIOLATION_PREFIX + "[フィールド代入] %s が %s %s.%s に代入しています%s %s",
                             methodName(origin), kind, javaClass.getSimpleName(), field.getName(), from,
                             location(access))));
                 }
@@ -440,7 +443,7 @@ public final class SpringRaceConditionRules {
                                     || callOwner.isAssignableTo(field.getRawType().getName()))) continue;
                             if (!reported.add(field.getName() + "#" + call.getName() + "#" + call.getLineNumber())) continue;
                             events.add(SimpleConditionEvent.violated(call, String.format(
-                                    "[コレクション変更] %s がフィールド %s.%s（型: %s）の中身を %s() で変更しています %s",
+                                    VIOLATION_PREFIX + "[コレクション変更] %s がフィールド %s.%s（型: %s）の中身を %s() で変更しています %s",
                                     methodName(cu), javaClass.getSimpleName(), field.getName(),
                                     field.getRawType().getSimpleName(), call.getName(), location(call))));
                         }
@@ -470,7 +473,7 @@ public final class SpringRaceConditionRules {
                 for (JavaField f : javaClass.getFields()) {
                     if (!isAllowListed(f) && hasAnyAnnotation(f, INJECTION_ANNOTATIONS) && isPrototypeWithoutProxy(f.getRawType())) {
                         events.add(SimpleConditionEvent.violated(f, String.format(
-                                "[prototype 直接注入] %s の注入フィールド %s に prototype の %s を直接注入しています (%s.java)",
+                                VIOLATION_PREFIX + "[prototype 直接注入] %s の注入フィールド %s に prototype の %s を直接注入しています (%s.java)",
                                 javaClass.getName(), f.getName(), f.getRawType().getSimpleName(), javaClass.getSimpleName())));
                     }
                 }
@@ -484,7 +487,7 @@ public final class SpringRaceConditionRules {
 
             private void report(ConditionEvents events, JavaCodeUnit cu, JavaClass owner, String where, JavaClass type) {
                 events.add(SimpleConditionEvent.violated(cu, String.format(
-                        "[prototype 直接注入] %s の%sに prototype の %s を直接注入しています (%s.java)",
+                        VIOLATION_PREFIX + "[prototype 直接注入] %s の%sに prototype の %s を直接注入しています (%s.java)",
                         owner.getName(), where, type.getSimpleName(), owner.getSimpleName())));
             }
         };

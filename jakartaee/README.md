@@ -1,35 +1,39 @@
-# race-condition-rules-jakartaee（Jakarta EE 用レースコンディション対策ルール）
+# race-condition-rules-jakartaee（Jakarta EE 用ステートリーク対策ルール）
 
-`@Stateless` / `@Singleton` EJB と `@ApplicationScoped` CDI Bean が、フィールドにリクエストごとの値
-（画面の入力値、ログインユーザー、検索条件など）を持っていたら `mvn test` を失敗させる ArchUnit ルールです。
+`@Stateless` / `@Singleton` EJB、`@ApplicationScoped` CDI Bean、Servlet リスナー
+（`@WebListener`、`ServletRequestListener` / `HttpSessionListener` / `ServletContextListener`）が、
+フィールドにリクエストごとの値（画面の入力値、ログインユーザー、検索条件など）を持っていたら
+`mvn test` を失敗させる ArchUnit ルールです。
 
 ## どんな不具合を防ぐか
 
-一般的な呼び名は **スレッドセーフでない問題 / 競合状態（レースコンディション）** です。
+この不具合を **ステートリーク** と呼びます。同時に実行されて値が混ざるときは、レースコンディションとしても現れます。
 
 | Bean の種類 | インスタンス | フィールドに値を入れると |
 |---|---|---|
 | `@Stateless` EJB | プールされ、呼び出しのたびに空いているものが貸し出される | 別の利用者の値が混ざる・前回の値が残る |
 | `@Singleton` EJB | アプリ全体で 1 個 | 全利用者で上書きし合う（`@Lock(WRITE)` でも値の混在は防げない） |
 | `@ApplicationScoped` / `@jakarta.inject.Singleton` CDI Bean | アプリ全体で 1 個、ロックもない | 全利用者で上書きし合う |
+| Servlet リスナー（`@WebListener`、または `ServletRequestListener` / `HttpSessionListener` / `ServletContextListener`） | アプリ全体で 1 個。リクエストリスナーはリクエストごとに並行して呼ばれる | 別リクエスト・別セッションの値で上書きし合う |
 
 `@Inject` などの注入フィールドは問題ありません（中身は共有してよい部品やプロキシで、参照が途中で変わらないため）。
 対象外: `@Stateful`、`@RequestScoped`、`@SessionScoped`、`@ViewScoped`、`@ConversationScoped`、`@Dependent`（共有されないため）。
+`@WebListener` が付いていなくても、上の 3 インターフェースを実装していれば対象です（`web.xml` や `ServletContext.addListener` での登録を想定）。`jakarta.*` / `javax.*` の両方です。
 
-## ルール一覧（9 ルール = 3 種類の Bean × 3 ルール）
+## ルール一覧（12 ルール = 4 種類 × 3 ルール）
 
 | 定数 | 内容 |
 |---|---|
-| `STATELESS_ONLY_SAFE_FIELDS` / `SINGLETON_…` / `APPLICATION_SCOPED_…` | **A 宣言**: フィールドは注入（`@Inject` `@EJB` `@Resource` `@PersistenceContext` `@PersistenceUnit` `@Context` `@ConfigProperty`）、`@Inject` コンストラクタで受け取る `final`、`static final`、`final` のロガーだけ |
-| `STATELESS_NO_FIELD_WRITES` / `SINGLETON_…` / `APPLICATION_SCOPED_…` | **B 代入**: コンストラクタ・`@PostConstruct`・`@PreDestroy` 以外でフィールドに代入しない（ラムダ・内部クラスからの代入も検出） |
-| `STATELESS_NO_COLLECTION_MUTATION` / `SINGLETON_…` / `APPLICATION_SCOPED_…` | **C 中身の変更**: 同じく、`List` / `Map` / `Set` / `StringBuilder` などのフィールドを `add` / `put` / `remove` / `clear` / `append` などで変更しない |
+| `STATELESS_ONLY_SAFE_FIELDS` / `SINGLETON_…` / `APPLICATION_SCOPED_…` / `SERVLET_LISTENER_…` | **A 宣言**: フィールドは注入（`@Inject` `@EJB` `@Resource` `@PersistenceContext` `@PersistenceUnit` `@Context` `@ConfigProperty`）、`@Inject` コンストラクタで受け取る `final`、`static final`、`final` のロガーだけ |
+| `STATELESS_NO_FIELD_WRITES` / `SINGLETON_…` / `APPLICATION_SCOPED_…` / `SERVLET_LISTENER_…` | **B 代入**: コンストラクタ・`@PostConstruct`・`@PreDestroy` 以外でフィールドに代入しない（ラムダ・内部クラスからの代入も検出）。Servlet リスナーは `contextInitialized` / `contextDestroyed` も免除 |
+| `STATELESS_NO_COLLECTION_MUTATION` / `SINGLETON_…` / `APPLICATION_SCOPED_…` / `SERVLET_LISTENER_…` | **C 中身の変更**: 同じく、`List` / `Map` / `Set` / `StringBuilder` などのフィールドを `add` / `put` / `remove` / `clear` / `append` などで変更しない |
 
 違反はこのように日本語・行番号付きで出ます。
 
 ```
-[フィールド代入] StatefulOrderSearchService.setCondition() が フィールド StatefulOrderSearchService.condition に代入しています (StatefulOrderSearchService.java:34)
-[コレクション変更] StatefulOrderSearchService.search() がフィールド StatefulOrderSearchService.searchHistory（型: List）の中身を add() で変更しています (StatefulOrderSearchService.java:40)
-[フィールド宣言] com.example.app.antipattern.CurrentUserHolder のフィールド loginId（型: String）: 注入でも static final でもないインスタンスフィールド（リクエストの値を保持できてしまう） (CurrentUserHolder.java)
+【ステートリーク】[フィールド代入] StatefulOrderSearchService.setCondition() が フィールド StatefulOrderSearchService.condition に代入しています (StatefulOrderSearchService.java:34)
+【ステートリーク】[コレクション変更] StatefulOrderSearchService.search() がフィールド StatefulOrderSearchService.searchHistory（型: List）の中身を add() で変更しています (StatefulOrderSearchService.java:40)
+【ステートリーク】[フィールド宣言] com.example.app.antipattern.CurrentUserHolder のフィールド loginId（型: String）: 注入でも static final でもないインスタンスフィールド（リクエストの値を保持できてしまう） (CurrentUserHolder.java)
 ```
 
 ## 既存プロジェクトへの入れ方
@@ -62,32 +66,32 @@
 </dependency>
 ```
 
-3. テストクラスを 1 つ置く（`examples/RaceConditionTest.java`）。`packages` を自分のルートパッケージにします。
+3. テストクラスを 1 つ置く（`examples/StateLeakTest.java`）。`packages` を自分のルートパッケージにします。
 
 ```java
 package com.mycompany.myapp.arch;
 
-import com.example.archrules.jakartaee.JakartaEeRaceConditionRules;
+import com.example.archrules.jakartaee.JakartaEeStateLeakRules;
 import com.tngtech.archunit.core.importer.ImportOption;
 import com.tngtech.archunit.junit.AnalyzeClasses;
 import com.tngtech.archunit.junit.ArchTest;
 import com.tngtech.archunit.junit.ArchTests;
 
 @AnalyzeClasses(packages = "com.mycompany.myapp", importOptions = ImportOption.DoNotIncludeTests.class)
-class RaceConditionTest {
+class StateLeakTest {
 
     @ArchTest
-    static final ArchTests レースコンディション対策 = ArchTests.in(JakartaEeRaceConditionRules.class);
+    static final ArchTests ステートリーク対策 = ArchTests.in(JakartaEeStateLeakRules.class);
 }
 ```
 
 ルールを選びたいときは 1 つずつ書きます（不要な行を消すだけ）。
 
 ```java
-    @ArchTest static final ArchRule stateless宣言 = JakartaEeRaceConditionRules.STATELESS_ONLY_SAFE_FIELDS;
-    @ArchTest static final ArchRule stateless代入 = JakartaEeRaceConditionRules.STATELESS_NO_FIELD_WRITES;
-    @ArchTest static final ArchRule stateless変更 = JakartaEeRaceConditionRules.STATELESS_NO_COLLECTION_MUTATION;
-    // SINGLETON_… / APPLICATION_SCOPED_… も同様
+    @ArchTest static final ArchRule stateless宣言 = JakartaEeStateLeakRules.STATELESS_ONLY_SAFE_FIELDS;
+    @ArchTest static final ArchRule stateless代入 = JakartaEeStateLeakRules.STATELESS_NO_FIELD_WRITES;
+    @ArchTest static final ArchRule stateless変更 = JakartaEeStateLeakRules.STATELESS_NO_COLLECTION_MUTATION;
+    // SINGLETON_… / APPLICATION_SCOPED_… / SERVLET_LISTENER_… も同様
 ```
 
 Gradle なら `testImplementation 'com.example.archrules:race-condition-rules-jakartaee:1.0.0'` と
@@ -95,7 +99,7 @@ Gradle なら `testImplementation 'com.example.archrules:race-condition-rules-ja
 
 ### 方法 2: ソースをコピーする
 
-jar を配布できない場合は、`src/main/java/com/example/archrules/jakartaee/JakartaEeRaceConditionRules.java` を
+jar を配布できない場合は、`src/main/java/com/example/archrules/jakartaee/JakartaEeStateLeakRules.java` を
 利用側の `src/test/java` の好きなパッケージにコピーし（package 文だけ直す）、上のテストクラスを置いてください。
 必要な依存は `archunit-junit5`（test）だけです。`@AllowStatefulField` も自分で 1 ファイル作れば使えます（下記）。
 
@@ -104,7 +108,7 @@ jar を配布できない場合は、`src/main/java/com/example/archrules/jakart
 ファクトリメソッドで同じルールを作れます（アノテーションは完全修飾名、直接付いているものが対象）。
 
 ```java
-@ArchTest static final ArchRule 独自 = JakartaEeRaceConditionRules.noFieldWrites(
+@ArchTest static final ArchRule 独自 = JakartaEeStateLeakRules.noFieldWrites(
         "@MyService", "理由の文章", "com.mycompany.MyService");
 // onlySafeFields(...) / noCollectionMutation(...) も同じ引数
 ```
@@ -146,7 +150,7 @@ public @interface AllowStatefulField { String value(); }
 4. 違反を直すと記録から自動で消えます
 
 `-Darchunit.freeze=true` を付けなければ、記録は無視して全違反で落ちます。
-自分で包みたいときは `JakartaEeRaceConditionRules.freezeIfEnabled(rule)` か `FreezingArchRule.freeze(rule)` を使ってください。
+自分で包みたいときは `JakartaEeStateLeakRules.freezeIfEnabled(rule)` か `FreezingArchRule.freeze(rule)` を使ってください。
 記録はルールの説明文で紐づくので、このライブラリを更新して文言が変わったら `freeze.refreeze=true` で記録し直します。
 
 ## 検出できないもの（制約）
@@ -155,7 +159,7 @@ public @interface AllowStatefulField { String value(); }
 - **注入した別オブジェクトの中身の変更**: `holder.setKeyword(k)` は、呼び出し側では検出しません。`holder` が `@ApplicationScoped` などなら、そちら側で検出されます。普通の POJO・DTO をフィールドに持っている場合は A で検出されます。
 - **`@PostConstruct` で初期化するフィールド**: B・C では許可されますが、A（宣言）では注入ではないため検出されます。読み取り専用キャッシュなどは `@AllowStatefulField` を付けてください。
 - **スレッドセーフな型も検出します**: `AtomicInteger`、`ConcurrentHashMap` などでも、リクエストごとの値を入れるのは誤りなので検出します。共有してよいものだけ `@AllowStatefulField` で除外してください。
-- **対象はクラスに直接付いたアノテーション**だけです。ステレオタイプ（メタアノテーション）、`ejb-jar.xml` や `beans.xml` での宣言、`@Produces` メソッドで作るオブジェクトは対象外です。
+- **EJB / CDI はクラスに直接付いたアノテーション**だけです。ステレオタイプ（メタアノテーション）、`ejb-jar.xml` や `beans.xml` での宣言、`@Produces` メソッドで作るオブジェクトは対象外です。Servlet リスナーは `@WebListener` に加え、`ServletRequestListener` / `HttpSessionListener` / `ServletContextListener` の実装でも拾います（`jakarta.*` / `javax.*`）。それ以外のリスナー（属性リスナーなど）は `@WebListener` が付いているときだけです。
 - **親クラスのフィールド**: アノテーションの付いていない抽象基底クラスのフィールドは検査しません。
 - **C の変更メソッドは名前で判定**しています（`add` `put` `remove` `clear` `append` など）。独自コレクションの独自メソッドや `AtomicXxx.incrementAndGet()` は C の対象外です（A では検出されます）。
 - `@SessionScoped` は対象外ですが、同じ利用者が複数タブを開くと共有される点には注意してください。
@@ -166,6 +170,6 @@ public @interface AllowStatefulField { String value(); }
 mvn test
 ```
 
-`src/test/java/.../fixtures/bad` のわざと危ないクラスで、各ルールが決まった件数（A 6 / B 5 / C 1、`@Singleton` 2 / 1 / 1、`@ApplicationScoped` 2 / 1 / 1）を検出すること、
-`fixtures/good`（正しい書き方、`@Stateful`・`@RequestScoped`、`@AllowStatefulField` 付き）で 1 件も検出しないことを確認します（22 テスト）。
-`javax.ejb.Stateless` やラムダからの代入も検出できることを確認しています。
+`src/test/java/.../fixtures/bad` のわざと危ないクラスで、各ルールが決まった件数（A 6 / B 5 / C 1、`@Singleton` 2 / 1 / 1、`@ApplicationScoped` 2 / 1 / 1、Servlet リスナー 7 / 5 / 2）を検出すること、
+`fixtures/good`（正しい書き方、`@Stateful`・`@RequestScoped`、`@AllowStatefulField` 付き、`contextInitialized` での初期化）で 1 件も検出しないことを確認します（29 テスト）。
+`javax.ejb.Stateless`、`javax.servlet.ServletRequestListener`、ラムダからの代入も検出できることを確認しています。

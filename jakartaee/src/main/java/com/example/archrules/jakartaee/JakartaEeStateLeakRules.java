@@ -29,7 +29,7 @@ import com.tngtech.archunit.lang.SimpleConditionEvent;
 import com.tngtech.archunit.library.freeze.FreezingArchRule;
 
 /**
- * Jakarta EE（Java EE）向けレースコンディション対策ルール集:
+ * Jakarta EE（Java EE）向けステートリーク対策ルール集:
  * 「共有インスタンスの Bean がフィールドにリクエスト固有の状態を持つ」ことを禁止する ArchUnit ルール。
  *
  * <p>対象（Bean の種類ごとに別ルール。個別に選択 / freeze できます）
@@ -37,32 +37,35 @@ import com.tngtech.archunit.library.freeze.FreezingArchRule;
  *   <li>@Stateless EJB      … インスタンスがプールされ、複数の利用者で使い回される</li>
  *   <li>@Singleton EJB      … アプリ全体で 1 インスタンスを全利用者が共有</li>
  *   <li>@ApplicationScoped / @jakarta.inject.Singleton の CDI Bean … 同上、しかも並行に呼ばれる</li>
+ *   <li>Servlet リスナー … @WebListener、または ServletRequestListener / HttpSessionListener /
+ *       ServletContextListener（jakarta.* / javax.*）。コンテナが 1 インスタンスを全イベントで共有</li>
  * </ul>
  * jakarta.* / javax.* の両方に対応。アノテーションは文字列で判定するため、このライブラリ自体は
  * Jakarta EE API に依存しません。
  *
- * <p>ルール（それぞれ上の 3 種類に適用）
+ * <p>ルール（それぞれ上の 4 種類に適用）
  * <ul>
  *   <li>A（宣言）: フィールドは「注入（@Inject 等）」「static final」「Logger」以外を宣言してはいけない</li>
- *   <li>B（代入）: コンストラクタ・@PostConstruct・@PreDestroy 以外でフィールドへ代入してはいけない（バイトコードで判定）</li>
+ *   <li>B（代入）: コンストラクタ・@PostConstruct・@PreDestroy 以外でフィールドへ代入してはいけない
+ *       （Servlet リスナーは contextInitialized・contextDestroyed も免除。バイトコードで判定）</li>
  *   <li>C（中身の変更）: 同じく、フィールドの List / Map / StringBuilder 等を add / put / clear 等で変更してはいけない</li>
  * </ul>
  *
  * <p>使い方（利用側のテスト）:
  * <pre>{@code
  * @AnalyzeClasses(packages = "com.mycompany.myapp", importOptions = ImportOption.DoNotIncludeTests.class)
- * class RaceConditionTest {
+ * class StateLeakTest {
  *     @ArchTest
- *     static final ArchTests 全ルール = ArchTests.in(JakartaEeRaceConditionRules.class);
+ *     static final ArchTests 全ルール = ArchTests.in(JakartaEeStateLeakRules.class);
  * }
  * }</pre>
  *
  * <p>除外: {@code @AllowStatefulField("理由")} をフィールド・メソッド・クラスに付ける（単純名で判定）。
  * 既存違反を一括で凍結するには {@code -Darchunit.freeze=true}（FreezingArchRule）。
  */
-public final class JakartaEeRaceConditionRules {
+public final class JakartaEeStateLeakRules {
 
-    private JakartaEeRaceConditionRules() {
+    private JakartaEeStateLeakRules() {
     }
 
     // ------------------------------------------------------------------
@@ -72,11 +75,27 @@ public final class JakartaEeRaceConditionRules {
     /** 除外用アノテーションの単純名（パッケージは問わない） */
     public static final String ALLOW_ANNOTATION_SIMPLE_NAME = "AllowStatefulField";
 
+    /** 違反メッセージの先頭。ログや CI でこの不具合だけを拾えるようにする */
+    public static final String VIOLATION_PREFIX = "【ステートリーク】";
+
     public static final String[] STATELESS_EJB = {"jakarta.ejb.Stateless", "javax.ejb.Stateless"};
     public static final String[] SINGLETON_EJB = {"jakarta.ejb.Singleton", "javax.ejb.Singleton"};
     public static final String[] APPLICATION_SCOPED_CDI = {
             "jakarta.enterprise.context.ApplicationScoped", "javax.enterprise.context.ApplicationScoped",
             "jakarta.inject.Singleton", "javax.inject.Singleton"};
+
+    /** @WebListener。付いていれば、下の 3 インターフェース以外のリスナー（属性リスナー等）も対象 */
+    public static final String[] WEB_LISTENER = {
+            "jakarta.servlet.annotation.WebListener", "javax.servlet.annotation.WebListener"};
+
+    /**
+     * コンテナが 1 インスタンスですべてのイベントを受けるリスナー。
+     * {@code web.xml} や {@code ServletContext.addListener} で登録され {@code @WebListener} が付かないクラスも拾う。
+     */
+    public static final String[] SERVLET_LISTENER_INTERFACES = {
+            "jakarta.servlet.ServletRequestListener", "javax.servlet.ServletRequestListener",
+            "jakarta.servlet.http.HttpSessionListener", "javax.servlet.http.HttpSessionListener",
+            "jakarta.servlet.ServletContextListener", "javax.servlet.ServletContextListener"};
 
     /** 付いていればコンテナ管理（注入）とみなすフィールドのアノテーション */
     static final Set<String> INJECTION_ANNOTATIONS = Set.of(
@@ -92,6 +111,13 @@ public final class JakartaEeRaceConditionRules {
     static final Set<String> LIFECYCLE_ANNOTATIONS = Set.of(
             "jakarta.annotation.PostConstruct", "javax.annotation.PostConstruct",
             "jakarta.annotation.PreDestroy", "javax.annotation.PreDestroy");
+
+    /**
+     * ServletContextListener の起動・終了メソッド。@PostConstruct / @PreDestroy に相当するため、
+     * リスナールールの B・C では免除する。requestInitialized や sessionCreated は並行して呼ばれるので免除しない。
+     */
+    static final Set<String> SERVLET_CONTEXT_LIFECYCLE_METHODS = Set.of(
+            "contextInitialized", "contextDestroyed");
 
     /** final のインスタンスフィールドとして持ってよいロガー型 */
     static final Set<String> LOGGER_TYPES = Set.of(
@@ -134,8 +160,16 @@ public final class JakartaEeRaceConditionRules {
             + "リクエスト固有の値は引数で渡すか @RequestScoped / @ViewScoped の Bean に持たせてください"
             + "（共有してよいものは @AllowStatefulField(\"理由\") を付けてください）";
 
+    public static final String BECAUSE_SERVLET_LISTENER =
+            "Servlet リスナー（@WebListener、ServletRequestListener、HttpSessionListener、ServletContextListener）は"
+            + "コンテナが 1 インスタンスだけ作り、全リクエスト・全セッションのイベントをそのインスタンスで受けます。"
+            + "ServletRequestListener はリクエストごとに並行して呼ばれるため、"
+            + "リクエスト固有の値をフィールドに持つと別のリクエストの値で上書きされます。"
+            + "起動時の初期化は contextInitialized / contextDestroyed に書き、"
+            + "共有してよいキャッシュ等は @AllowStatefulField(\"理由\") を付けてください";
+
     // ------------------------------------------------------------------
-    // ルール本体（ArchTests.in(JakartaEeRaceConditionRules.class) で 9 ルールすべてを実行できる）
+    // ルール本体（ArchTests.in(JakartaEeStateLeakRules.class) で 12 ルールすべてを実行できる）
     // ------------------------------------------------------------------
 
     // ---- @Stateless EJB ----
@@ -176,6 +210,16 @@ public final class JakartaEeRaceConditionRules {
     @ArchTest
     public static final ArchRule APPLICATION_SCOPED_NO_COLLECTION_MUTATION =
             noCollectionMutation("@ApplicationScoped CDI Bean", BECAUSE_APPLICATION_SCOPED, APPLICATION_SCOPED_CDI);
+
+    // ---- Servlet リスナー ----
+    @ArchTest
+    public static final ArchRule SERVLET_LISTENER_ONLY_SAFE_FIELDS = servletListenerOnlySafeFields();
+
+    @ArchTest
+    public static final ArchRule SERVLET_LISTENER_NO_FIELD_WRITES = servletListenerNoFieldWrites();
+
+    @ArchTest
+    public static final ArchRule SERVLET_LISTENER_NO_COLLECTION_MUTATION = servletListenerNoCollectionMutation();
 
     // ------------------------------------------------------------------
     // ルール生成（独自のステレオタイプ等にも同じルールをかけたいときに使う）
@@ -232,6 +276,45 @@ public final class JakartaEeRaceConditionRules {
                 c -> Arrays.stream(annotations).anyMatch(c::isAnnotatedWith) && !isAllowListed(c));
     }
 
+    /** @WebListener、または ServletRequestListener / HttpSessionListener / ServletContextListener（jakarta.* / javax.*） */
+    public static DescribedPredicate<JavaClass> areServletListeners() {
+        return DescribedPredicate.describe(
+                "Servlet リスナー（@WebListener、または ServletRequestListener / HttpSessionListener / ServletContextListener。"
+                        + "@" + ALLOW_ANNOTATION_SIMPLE_NAME + " 付きクラスを除く）",
+                c -> isServletListener(c) && !isAllowListed(c));
+    }
+
+    static boolean isServletListener(JavaClass javaClass) {
+        if (Arrays.stream(WEB_LISTENER).anyMatch(javaClass::isAnnotatedWith)) {
+            return true;
+        }
+        return Arrays.stream(SERVLET_LISTENER_INTERFACES).anyMatch(javaClass::isAssignableTo);
+    }
+
+    private static ArchRule servletListenerOnlySafeFields() {
+        return freezeIfEnabled(classes()
+                .that(areServletListeners())
+                .should(haveOnlyStatelessSafeFields())
+                .allowEmptyShould(true)
+                .because(BECAUSE_SERVLET_LISTENER));
+    }
+
+    private static ArchRule servletListenerNoFieldWrites() {
+        return freezeIfEnabled(classes()
+                .that(areServletListeners())
+                .should(notWriteOwnFieldsOutsideLifecycle(SERVLET_CONTEXT_LIFECYCLE_METHODS))
+                .allowEmptyShould(true)
+                .because(BECAUSE_SERVLET_LISTENER));
+    }
+
+    private static ArchRule servletListenerNoCollectionMutation() {
+        return freezeIfEnabled(classes()
+                .that(areServletListeners())
+                .should(notMutateContainerFieldsOutsideLifecycle(SERVLET_CONTEXT_LIFECYCLE_METHODS))
+                .allowEmptyShould(true)
+                .because(BECAUSE_SERVLET_LISTENER));
+    }
+
     static boolean isAllowListed(HasAnnotations<?> element) {
         return element.getAnnotations().stream()
                 .anyMatch(a -> a.getRawType().getSimpleName().equals(ALLOW_ANNOTATION_SIMPLE_NAME));
@@ -247,11 +330,23 @@ public final class JakartaEeRaceConditionRules {
 
     /** コンストラクタ・static 初期化子・@PostConstruct/@PreDestroy・許可メソッド・合成メソッドは対象外 */
     static boolean isExemptCodeUnit(JavaCodeUnit cu) {
+        return isExemptCodeUnit(cu, Set.of());
+    }
+
+    static boolean isExemptCodeUnit(JavaCodeUnit cu, Set<String> extraMethodNames) {
         return cu.isConstructor()
                 || cu.getName().equals(JavaStaticInitializer.STATIC_INITIALIZER_NAME)
                 || cu.getModifiers().contains(JavaModifier.SYNTHETIC)
                 || hasAnyAnnotation(cu, LIFECYCLE_ANNOTATIONS)
+                || extraMethodNames.contains(cu.getName())
                 || isAllowListed(cu);
+    }
+
+    static String extraExemptionPhrase(Set<String> extraMethodNames) {
+        if (extraMethodNames.isEmpty()) {
+            return "";
+        }
+        return "・" + String.join("・", extraMethodNames.stream().sorted().toList());
     }
 
     static String location(JavaAccess<?> access) {
@@ -295,7 +390,7 @@ public final class JakartaEeRaceConditionRules {
                             ? "static だが final ではない（全インスタンス・全スレッドで共有される）"
                             : "注入でも static final でもないインスタンスフィールド（リクエストの値を保持できてしまう）";
                     events.add(SimpleConditionEvent.violated(f, String.format(
-                            "[フィールド宣言] %s のフィールド %s（型: %s）: %s (%s.java)",
+                            VIOLATION_PREFIX + "[フィールド宣言] %s のフィールド %s（型: %s）: %s (%s.java)",
                             javaClass.getName(), f.getName(), f.getRawType().getSimpleName(), reason,
                             javaClass.getSimpleName())));
                 }
@@ -308,7 +403,12 @@ public final class JakartaEeRaceConditionRules {
     // ------------------------------------------------------------------
 
     public static ArchCondition<JavaClass> notWriteOwnFieldsOutsideLifecycle() {
-        return new ArchCondition<>("コンストラクタ・@PostConstruct・@PreDestroy 以外でフィールドに代入しない") {
+        return notWriteOwnFieldsOutsideLifecycle(Set.of());
+    }
+
+    public static ArchCondition<JavaClass> notWriteOwnFieldsOutsideLifecycle(Set<String> extraExemptMethodNames) {
+        return new ArchCondition<>("コンストラクタ・@PostConstruct・@PreDestroy"
+                + extraExemptionPhrase(extraExemptMethodNames) + " 以外でフィールドに代入しない") {
             @Override
             public void check(JavaClass javaClass, ConditionEvents events) {
                 // 自クラスのメソッドだけでなく、内部クラス・ラムダ・他クラスからの書き込みも拾う
@@ -321,12 +421,12 @@ public final class JakartaEeRaceConditionRules {
 
                     JavaCodeUnit origin = access.getOrigin();
                     boolean fromSelf = origin.getOwner().equals(javaClass);
-                    if (fromSelf && isExemptCodeUnit(origin)) continue;
+                    if (fromSelf && isExemptCodeUnit(origin, extraExemptMethodNames)) continue;
 
                     String kind = field.getModifiers().contains(JavaModifier.STATIC) ? "static フィールド" : "フィールド";
                     String from = fromSelf ? "" : "（内部クラス・他クラスからの書き込み）";
                     events.add(SimpleConditionEvent.violated(access, String.format(
-                            "[フィールド代入] %s が %s %s.%s に代入しています%s %s",
+                            VIOLATION_PREFIX + "[フィールド代入] %s が %s %s.%s に代入しています%s %s",
                             methodName(origin), kind, javaClass.getSimpleName(), field.getName(), from,
                             location(access))));
                 }
@@ -341,11 +441,16 @@ public final class JakartaEeRaceConditionRules {
     // ------------------------------------------------------------------
 
     public static ArchCondition<JavaClass> notMutateContainerFieldsOutsideLifecycle() {
-        return new ArchCondition<>("コンストラクタ・@PostConstruct・@PreDestroy 以外でフィールドのコレクション等を変更しない") {
+        return notMutateContainerFieldsOutsideLifecycle(Set.of());
+    }
+
+    public static ArchCondition<JavaClass> notMutateContainerFieldsOutsideLifecycle(Set<String> extraExemptMethodNames) {
+        return new ArchCondition<>("コンストラクタ・@PostConstruct・@PreDestroy"
+                + extraExemptionPhrase(extraExemptMethodNames) + " 以外でフィールドのコレクション等を変更しない") {
             @Override
             public void check(JavaClass javaClass, ConditionEvents events) {
                 for (JavaCodeUnit cu : javaClass.getCodeUnits()) {
-                    if (isExemptCodeUnit(cu)) continue;
+                    if (isExemptCodeUnit(cu, extraExemptMethodNames)) continue;
 
                     // 行番号 → その行で読んでいる自クラスのコンテナ型フィールド
                     Map<Integer, Set<JavaField>> containerReadsByLine = new HashMap<>();
@@ -373,7 +478,7 @@ public final class JakartaEeRaceConditionRules {
                                     || callOwner.isAssignableTo(field.getRawType().getName()))) continue;
                             if (!reported.add(field.getName() + "#" + call.getName() + "#" + call.getLineNumber())) continue;
                             events.add(SimpleConditionEvent.violated(call, String.format(
-                                    "[コレクション変更] %s がフィールド %s.%s（型: %s）の中身を %s() で変更しています %s",
+                                    VIOLATION_PREFIX + "[コレクション変更] %s がフィールド %s.%s（型: %s）の中身を %s() で変更しています %s",
                                     methodName(cu), javaClass.getSimpleName(), field.getName(),
                                     field.getRawType().getSimpleName(), call.getName(), location(call))));
                         }

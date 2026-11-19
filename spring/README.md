@@ -1,11 +1,11 @@
-# race-condition-rules-spring（Spring MVC / Spring Boot 用レースコンディション対策ルール）
+# race-condition-rules-spring（Spring MVC / Spring Boot 用ステートリーク対策ルール）
 
 Spring のシングルトン Bean（`@Controller` / `@RestController` / `@Service` / `@Repository` / `@Component` / `@Configuration` …）が、
 フィールドにリクエストごとの値（画面の入力値、ログインユーザー、検索条件など）を持っていたら `mvn test` を失敗させる ArchUnit ルールです。
 
 ## どんな不具合を防ぐか
 
-一般的な呼び名は **スレッドセーフでない問題 / 競合状態（レースコンディション）** です。
+この不具合を **ステートリーク** と呼びます。同時に実行されて値が混ざるときは、レースコンディションとしても現れます。
 
 Spring の Bean は、スコープを指定しなければ **シングルトン（アプリ全体で 1 個）** で、全リクエストのスレッドから同時に呼ばれます。
 EJB のようなインスタンスプールもロックもないので、フィールドに入れた値は同時アクセスでそのまま混ざります。
@@ -39,9 +39,9 @@ public class OrderController {
 違反はこのように日本語・行番号付きで出ます。
 
 ```
-[フィールド代入] StatefulOrderController.search() が フィールド StatefulOrderController.keyword に代入しています (StatefulOrderController.java:27)
-[フィールド宣言] com.example.shop.antipattern.SearchHistoryService のフィールド history（型: List）: final だがコンストラクタ注入ではない（自分で new したオブジェクトを全利用者で共有している） (SearchHistoryService.java)
-[prototype 直接注入] com.example.shop.antipattern.BadReportService のコンストラクタ引数に prototype の ReportBuilder を直接注入しています (BadReportService.java)
+【ステートリーク】[フィールド代入] StatefulOrderController.search() が フィールド StatefulOrderController.keyword に代入しています (StatefulOrderController.java:27)
+【ステートリーク】[フィールド宣言] com.example.shop.antipattern.SearchHistoryService のフィールド history（型: List）: final だがコンストラクタ注入ではない（自分で new したオブジェクトを全利用者で共有している） (SearchHistoryService.java)
+【ステートリーク】[prototype 直接注入] com.example.shop.antipattern.BadReportService のコンストラクタ引数に prototype の ReportBuilder を直接注入しています (BadReportService.java)
 ```
 
 ## 既存プロジェクトへの入れ方
@@ -74,31 +74,31 @@ public class OrderController {
 </dependency>
 ```
 
-3. テストクラスを 1 つ置く（`examples/RaceConditionTest.java`）。`packages` を自分のルートパッケージにします。
+3. テストクラスを 1 つ置く（`examples/StateLeakTest.java`）。`packages` を自分のルートパッケージにします。
 
 ```java
 package com.mycompany.myapp.arch;
 
-import com.example.archrules.spring.SpringRaceConditionRules;
+import com.example.archrules.spring.SpringStateLeakRules;
 import com.tngtech.archunit.core.importer.ImportOption;
 import com.tngtech.archunit.junit.AnalyzeClasses;
 import com.tngtech.archunit.junit.ArchTest;
 import com.tngtech.archunit.lang.ArchRule;
 
 @AnalyzeClasses(packages = "com.mycompany.myapp", importOptions = ImportOption.DoNotIncludeTests.class)
-class RaceConditionTest {
+class StateLeakTest {
 
-    @ArchTest static final ArchRule A_フィールド宣言 = SpringRaceConditionRules.SINGLETON_ONLY_SAFE_FIELDS;
-    @ArchTest static final ArchRule B_フィールド代入 = SpringRaceConditionRules.SINGLETON_NO_FIELD_WRITES;
-    @ArchTest static final ArchRule C_コレクション変更 = SpringRaceConditionRules.SINGLETON_NO_COLLECTION_MUTATION;
-    @ArchTest static final ArchRule D_prototype直接注入 = SpringRaceConditionRules.NO_DIRECT_PROTOTYPE_INJECTION;
+    @ArchTest static final ArchRule A_フィールド宣言 = SpringStateLeakRules.SINGLETON_ONLY_SAFE_FIELDS;
+    @ArchTest static final ArchRule B_フィールド代入 = SpringStateLeakRules.SINGLETON_NO_FIELD_WRITES;
+    @ArchTest static final ArchRule C_コレクション変更 = SpringStateLeakRules.SINGLETON_NO_COLLECTION_MUTATION;
+    @ArchTest static final ArchRule D_prototype直接注入 = SpringStateLeakRules.NO_DIRECT_PROTOTYPE_INJECTION;
 }
 ```
 
 全部まとめてなら 1 行で書けます。
 
 ```java
-    @ArchTest static final ArchTests レースコンディション対策 = ArchTests.in(SpringRaceConditionRules.class);
+    @ArchTest static final ArchTests ステートリーク対策 = ArchTests.in(SpringStateLeakRules.class);
 ```
 
 Spring Boot の `spring-boot-starter-test` には ArchUnit は入っていないので、`archunit-junit5` の追加が必要です。
@@ -106,7 +106,7 @@ Gradle なら `testImplementation 'com.example.archrules:race-condition-rules-sp
 
 ### 方法 2: ソースをコピーする
 
-jar を配布できない場合は、`src/main/java/com/example/archrules/spring/SpringRaceConditionRules.java` を
+jar を配布できない場合は、`src/main/java/com/example/archrules/spring/SpringStateLeakRules.java` を
 利用側の `src/test/java` の好きなパッケージにコピーし（package 文だけ直す）、上のテストクラスを置いてください。
 必要な依存は `archunit-junit5`（test）だけです。
 
@@ -138,7 +138,7 @@ public class CodeMasterRepository {
 3. `archunit_store/` をコミット。以後も `-Darchunit.freeze=true` 付きで実行すると、記録にない違反だけで失敗します
 4. 違反を直すと記録から自動で消えます
 
-`-Darchunit.freeze=true` を付けなければ全違反で落ちます。自分で包みたいときは `SpringRaceConditionRules.freezeIfEnabled(rule)` か
+`-Darchunit.freeze=true` を付けなければ全違反で落ちます。自分で包みたいときは `SpringStateLeakRules.freezeIfEnabled(rule)` か
 `FreezingArchRule.freeze(rule)` を使ってください。記録はルールの説明文で紐づくので、ライブラリ更新で文言が変わったら `freeze.refreeze=true` で記録し直します。
 
 ## 検出できないもの（制約）

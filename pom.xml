@@ -13,7 +13,7 @@
   <artifactId>race-condition-archunit-aggregator</artifactId>
   <version>1.0.0</version>
   <packaging>pom</packaging>
-  <name>レースコンディション対策 ArchUnit ルール（集約）</name>
+  <name>ステートリーク対策 ArchUnit ルール（集約）</name>
 
   <modules>
     <module>annotations</module>

@@ -7,7 +7,7 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
 /**
- * レースコンディション対策ルール（race-condition-rules-jakartaee / race-condition-rules-spring）から
+ * ステートリーク対策ルール（race-condition-rules-jakartaee / race-condition-rules-spring）から
  * 除外するための目印。
  *
  * <ul>

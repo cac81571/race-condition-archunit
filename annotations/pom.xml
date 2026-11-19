@@ -9,7 +9,7 @@
   <artifactId>race-condition-annotations</artifactId>
   <version>1.0.0</version>
   <packaging>jar</packaging>
-  <name>レースコンディション対策ルール: 除外用アノテーション</name>
+  <name>ステートリーク対策ルール: 除外用アノテーション</name>
 
   <properties>
     <maven.compiler.release>17</maven.compiler.release>

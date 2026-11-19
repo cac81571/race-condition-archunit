@@ -1,8 +1,8 @@
-# レースコンディション対策 ArchUnit ルール
+# ステートリーク対策 ArchUnit ルール
 
 「共有される Bean のフィールドに、画面の入力値などリクエストごとの値を保持してしまう」不具合を、
 `mvn test` の時点で検出して落とすための ArchUnit ルール集です。
-一般的には **スレッドセーフでない問題**、**競合状態（レースコンディション）** と呼ばれる不具合です。
+この不具合を **ステートリーク** と呼びます。同時に実行されて値が混ざるときは、レースコンディションとしても現れます。
 
 ```java
 @Stateless                       // Spring なら @Controller / @Service（どちらも全利用者で共有）
@@ -16,7 +16,7 @@ public class OrderSearchService {
 
 | フォルダ | artifactId | 内容 |
 |---|---|---|
-| `jakartaee/` | `race-condition-rules-jakartaee` | Jakarta EE（Java EE）用: `@Stateless` / `@Singleton` EJB、`@ApplicationScoped` CDI Bean の 9 ルール → [jakartaee/README.md](jakartaee/README.md) |
+| `jakartaee/` | `race-condition-rules-jakartaee` | Jakarta EE（Java EE）用: `@Stateless` / `@Singleton` EJB、`@ApplicationScoped` CDI Bean、Servlet リスナーの 12 ルール → [jakartaee/README.md](jakartaee/README.md) |
 | `spring/` | `race-condition-rules-spring` | Spring MVC / Spring Boot 用: シングルトン Bean（`@Controller` / `@Service` / `@Repository` / `@Component` …）の 4 ルール → [spring/README.md](spring/README.md) |
 | `annotations/` | `race-condition-annotations` | 除外用アノテーション `@AllowStatefulField("理由")` だけの依存なし jar（両方で共通） |
 
@@ -33,12 +33,12 @@ race-condition-archunit/
 ├── jakartaee/
 │   ├── README.md
 │   ├── examples/                … 利用側のテストクラスと archunit.properties の例
-│   ├── src/main/java/com/example/archrules/jakartaee/JakartaEeRaceConditionRules.java   … ルール本体（これ 1 ファイル）
+│   ├── src/main/java/com/example/archrules/jakartaee/JakartaEeStateLeakRules.java   … ルール本体（これ 1 ファイル）
 │   └── src/test/java/…           … ルール自体のテスト（危ない書き方 / 正しい書き方のフィクスチャ）
 └── spring/
     ├── README.md
     ├── examples/
-    ├── src/main/java/com/example/archrules/spring/SpringRaceConditionRules.java          … ルール本体（これ 1 ファイル）
+    ├── src/main/java/com/example/archrules/spring/SpringStateLeakRules.java          … ルール本体（これ 1 ファイル）
     └── src/test/java/…
 ```
 
